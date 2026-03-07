@@ -1,0 +1,10 @@
+{
+  "id": "local-graph-tag-links",
+  "name": "Local Graph Tag Links",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Fixes the local graph to show all notes connected through shared tags — other nodes attached to a tag are displayed even when the built-in local graph omits them.",
+  "author": "Lumyo",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
