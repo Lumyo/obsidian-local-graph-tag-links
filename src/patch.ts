@@ -71,6 +71,16 @@ function buildUnresolvedBacklinkIndex(app: App): Record<string, string[]> {
   return idx;
 }
 
+function shouldIncludeLinkedFile(
+  app: App,
+  path: string,
+  showAttachments: boolean,
+): boolean {
+  const file = app.vault.getAbstractFileByPath(path);
+  if (!(file instanceof TFile)) return false;
+  return showAttachments ? true : file.extension === 'md';
+}
+
 // ── Core injection ────────────────────────────────────────────────────────────
 
 /**
@@ -100,6 +110,7 @@ function injectTagLinks(
   const useFore = options.localForelinks !== false; // default true
   const useBack = options.localBacklinks !== false; // default true
   const useTags = options.showTags === true;
+  const showAttachments = options.showAttachments === true;
   const showUnresolved = options.hideUnresolved !== true; // default true (show them)
 
   const inGraph = (id: string): boolean =>
@@ -165,16 +176,15 @@ function injectTagLinks(
       if (useFore) {
         const outgoing = app.metadataCache.resolvedLinks[id] ?? {};
         for (const tgt of Object.keys(outgoing)) {
+          if (!shouldIncludeLinkedFile(app, tgt, showAttachments)) continue;
           if (inGraph(tgt)) {
             // Target already in graph — always draw the edge
             node.links[tgt] = true;
           } else if (canSpawn) {
-            if (app.vault.getAbstractFileByPath(tgt) instanceof TFile) {
-              nodes[tgt] = { type: '', links: {} };
-              if (weights) weights[tgt] = childW;
-              node.links[tgt] = true;
-              enqueue(tgt, childW);
-            }
+            nodes[tgt] = { type: '', links: {} };
+            if (weights) weights[tgt] = childW;
+            node.links[tgt] = true;
+            enqueue(tgt, childW);
           }
         }
       }
@@ -209,14 +219,13 @@ function injectTagLinks(
             : (backlinkIdx[id] ?? []); // file-path reverse index
 
         for (const src of backSources) {
+          if (!shouldIncludeLinkedFile(app, src, showAttachments)) continue;
           if (inGraph(src)) {
             nodes[src].links[id] = true;
           } else if (canSpawn) {
-            if (app.vault.getAbstractFileByPath(src) instanceof TFile) {
-              nodes[src] = { type: '', links: { [id]: true } };
-              if (weights) weights[src] = childW;
-              enqueue(src, childW);
-            }
+            nodes[src] = { type: '', links: { [id]: true } };
+            if (weights) weights[src] = childW;
+            enqueue(src, childW);
           }
         }
       }
