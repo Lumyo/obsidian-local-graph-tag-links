@@ -1,6 +1,6 @@
 {
   "name": "local-graph-tag-links",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Obsidian plugin: Fixes the local graph to show all notes connected through shared tags — other nodes attached to a tag are displayed even when the built-in local graph omits them.",
   "main": "main.js",
   "scripts": {
