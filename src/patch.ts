@@ -1,4 +1,4 @@
-import { App, TFile } from 'obsidian';
+import { TFile, type App, type CachedMetadata } from 'obsidian';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -17,6 +17,65 @@ interface GraphData {
   weights?: Record<string, number>; // weight ∝ closeness to center; 0 = max depth reached
 }
 
+interface LocalGraphOptions {
+  localJumps?: number;
+  localForelinks?: boolean;
+  localBacklinks?: boolean;
+  showTags?: boolean;
+  showAttachments?: boolean;
+  hideUnresolved?: boolean;
+  localFile?: unknown;
+}
+
+interface GraphRenderer {
+  setData: (this: GraphRenderer, data: GraphData) => void;
+}
+
+interface GraphView {
+  getViewType?: () => string;
+}
+
+interface PatchableGraphEngine {
+  options?: LocalGraphOptions;
+  renderer?: GraphRenderer;
+  view?: GraphView;
+}
+
+interface GraphEngineConstructor {
+  prototype: unknown;
+}
+
+export interface GraphEngine {
+  constructor: GraphEngineConstructor;
+  render: () => number;
+}
+
+interface PatchableGraphPrototype {
+  [PATCH_FLAG]?: true;
+  render: (this: PatchableGraphEngine) => number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function hasPrototype(value: unknown): value is GraphEngineConstructor {
+  return (
+    (typeof value === 'function' || isRecord(value)) && 'prototype' in value
+  );
+}
+
+export function isGraphEngine(value: unknown): value is GraphEngine {
+  if (!isRecord(value)) return false;
+  return typeof value.render === 'function' && hasPrototype(value.constructor);
+}
+
+function isPatchableGraphPrototype(
+  value: unknown,
+): value is PatchableGraphPrototype {
+  return isRecord(value) && typeof value.render === 'function';
+}
+
 // ── Tag helpers ───────────────────────────────────────────────────────────────
 
 function normalizeTag(raw: string): string {
@@ -24,12 +83,12 @@ function normalizeTag(raw: string): string {
   return (t.startsWith('#') ? t : '#' + t).toLowerCase();
 }
 
-function getFileTags(cache: any): Set<string> {
+function getFileTags(cache: CachedMetadata): Set<string> {
   const out = new Set<string>();
-  for (const ref of cache?.tags ?? []) {
+  for (const ref of cache.tags ?? []) {
     if (ref?.tag) out.add(normalizeTag(ref.tag));
   }
-  const fm: unknown = cache?.frontmatter?.tags;
+  const fm: unknown = cache.frontmatter?.tags;
   if (Array.isArray(fm)) {
     for (const t of fm) {
       if (typeof t === 'string' && t.trim()) out.add(normalizeTag(t));
@@ -62,7 +121,7 @@ function buildBacklinkIndex(app: App): Record<string, string[]> {
 function buildUnresolvedBacklinkIndex(app: App): Record<string, string[]> {
   const idx: Record<string, string[]> = {};
   for (const [src, targets] of Object.entries(
-    app.metadataCache.unresolvedLinks as Record<string, Record<string, number>>,
+    app.metadataCache.unresolvedLinks,
   )) {
     for (const tgt of Object.keys(targets)) {
       (idx[tgt] ??= []).push(src);
@@ -101,7 +160,7 @@ function shouldIncludeLinkedFile(
  */
 function injectTagLinks(
   app: App,
-  options: Record<string, any>,
+  options: LocalGraphOptions,
   data: GraphData,
 ): void {
   const { nodes, weights } = data;
@@ -116,13 +175,11 @@ function injectTagLinks(
   const inGraph = (id: string): boolean =>
     Object.prototype.hasOwnProperty.call(nodes, id);
 
-  const backlinkIdx = useBack
+  const backlinkIdx: Record<string, string[]> = useBack
     ? buildBacklinkIndex(app)
-    : ({} as Record<string, string[]>);
+    : {};
   const unresolvedBacklinkIdx =
-    useBack && showUnresolved
-      ? buildUnresolvedBacklinkIndex(app)
-      : ({} as Record<string, string[]>);
+    useBack && showUnresolved ? buildUnresolvedBacklinkIndex(app) : {};
 
   interface QItem {
     id: string;
@@ -192,13 +249,7 @@ function injectTagLinks(
       // Unresolved forelinks — links to non-existent notes
       // These live in unresolvedLinks, not resolvedLinks, with type 'unresolved'
       if (useFore && showUnresolved) {
-        const unresolved =
-          (
-            app.metadataCache.unresolvedLinks as Record<
-              string,
-              Record<string, number>
-            >
-          )[id] ?? {};
+        const unresolved = app.metadataCache.unresolvedLinks[id] ?? {};
         for (const tgt of Object.keys(unresolved)) {
           if (inGraph(tgt)) {
             node.links[tgt] = true;
@@ -260,15 +311,18 @@ function injectTagLinks(
  * Patches WG.prototype.render once (the GraphEngine shared by both graph views).
  * Returns a cleanup function that restores the original.
  */
-export function patchGraphEngine(app: App, engine: any): (() => void) | null {
-  const proto: any = engine?.constructor?.prototype;
-  if (!proto?.render || proto[PATCH_FLAG]) return null;
+export function patchGraphEngine(
+  app: App,
+  engine: GraphEngine,
+): (() => void) | null {
+  const proto = engine.constructor.prototype;
+  if (!isPatchableGraphPrototype(proto) || proto[PATCH_FLAG]) return null;
 
-  const originalRender = proto.render as (this: any) => number;
+  const originalRender = proto.render;
   proto[PATCH_FLAG] = true;
 
-  proto.render = function (this: any): number {
-    const opts: Record<string, any> = this.options ?? {};
+  proto.render = function (this: PatchableGraphEngine): number {
+    const opts = this.options ?? {};
     const isLocal = this.view?.getViewType?.() === 'localgraph';
 
     if (!isLocal || !opts.localFile || !opts.showTags) {
@@ -278,14 +332,13 @@ export function patchGraphEngine(app: App, engine: any): (() => void) | null {
     // Temporarily wrap renderer.setData to intercept the final subgraph
     // data right before it reaches the renderer.
     const renderer = this.renderer;
-    const originalSetData = renderer.setData as (
-      this: any,
-      data: GraphData,
-    ) => void;
+    if (!renderer) return originalRender.call(this);
 
-    renderer.setData = function (this: any, data: GraphData): void {
+    const originalSetData = renderer.setData;
+
+    renderer.setData = function (this: GraphRenderer, data: GraphData): void {
       injectTagLinks(app, opts, data);
-      return originalSetData.call(this, data);
+      originalSetData.call(this, data);
     };
 
     try {

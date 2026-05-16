@@ -1,5 +1,17 @@
-import { Plugin } from 'obsidian';
-import { patchGraphEngine } from './patch';
+import { Plugin, type WorkspaceLeaf } from 'obsidian';
+import { isGraphEngine, patchGraphEngine, type GraphEngine } from './patch';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function getGraphEngine(leaf: WorkspaceLeaf): GraphEngine | null {
+  const view: unknown = leaf.view;
+  if (!isRecord(view)) return null;
+
+  const { engine } = view;
+  return isGraphEngine(engine) ? engine : null;
+}
 
 export default class LocalGraphTagLinksPlugin extends Plugin {
   private unpatch: (() => void) | null = null;
@@ -19,7 +31,7 @@ export default class LocalGraphTagLinksPlugin extends Plugin {
     this.unpatch = null;
     // Force-refresh any open local graph so the injected nodes disappear
     for (const leaf of this.app.workspace.getLeavesOfType('localgraph')) {
-      (leaf.view as any)?.engine?.render?.();
+      getGraphEngine(leaf)?.render();
     }
   }
 
@@ -34,13 +46,13 @@ export default class LocalGraphTagLinksPlugin extends Plugin {
     // Immediately re-render any leaves that are already open
     if (this.unpatch) {
       for (const leaf of this.app.workspace.getLeavesOfType('localgraph')) {
-        (leaf.view as any)?.engine?.render?.();
+        getGraphEngine(leaf)?.render();
       }
     }
   }
 
-  private getLocalGraphEngine(): any {
+  private getLocalGraphEngine(): GraphEngine | null {
     const leaf = this.app.workspace.getLeavesOfType('localgraph')[0];
-    return (leaf?.view as any)?.engine ?? null;
+    return leaf ? getGraphEngine(leaf) : null;
   }
 }

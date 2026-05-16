@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="local-graph-tag-links.png" alt="Local Graph Tag Links" width="720">
+</p>
+
 # Local Graph Tag Links
 
 An [Obsidian](https://obsidian.md) plugin that fixes a bug in the built-in local graph where notes connected through shared tags are not shown.
